@@ -31,14 +31,17 @@ class CourtSpec:
     length: float = 13.40 * 100  # total court length
     width_doubles: float = 6.10 * 100  # total width for doubles
     width_singles: float = (
-        5.18
-        * 100  # total width for singles (reference; we draw full doubles by default)
-    )
+        5.18 * 100
+    )  # total width for singles (reference; we draw full doubles by default)
     net_height_center: float = 1.524 * 100  # net height at center
     line_width: float = 0.04 * 100  # typical painted line width (visual only)
     # Service lines (distances from the net or back boundary)
     short_service_from_net: float = 1.98 * 100
     long_service_from_back_doubles: float = 0.76 * 100
+
+    min_x_ground: float = length
+    min_y_ground: float = width_doubles + 1 * 100
+    min_z_ground: float = 8 * 100
 
     def half_length(self) -> float:
         return self.length / 2.0
@@ -66,6 +69,7 @@ class TrajectoryPoint:
 @dataclass
 class Trajectory:
     pid: Union[str, int]
+    msgtype: str
     points: List[TrajectoryPoint]
 
     def to_dataframe(self) -> pd.DataFrame:
@@ -133,9 +137,10 @@ def load_from_json_obj(
     trajs: List[Trajectory] = []
     for msg in messages:
         pid = msg.get("pid", "unknown")
+        msgtype = msg.get("msgtype", "unknown")
         positions = msg.get("positions", [])
         pts = _parse_positions(positions)
-        trajs.append(Trajectory(pid=pid, points=pts))
+        trajs.append(Trajectory(pid=pid, msgtype=msgtype, points=pts))
     return trajs
 
 
@@ -143,56 +148,6 @@ def load_from_json_file(path: str) -> List[Trajectory]:
     with open(path, "r", encoding="utf-8") as f:
         obj = json.load(f)
     return load_from_json_obj(obj)
-
-
-def load_from_dataframe(
-    df: pd.DataFrame,
-    pid_col: str = "pid",
-    x_col: str = "x",
-    y_col: str = "y",
-    z_col: str = "z",
-    ts_col: Optional[str] = "ts",
-    frame_id_col: Optional[str] = "frame_id",
-    vx_col: Optional[str] = "vx",
-    vy_col: Optional[str] = "vy",
-    vz_col: Optional[str] = "vz",
-) -> List[Trajectory]:
-    """
-    Flexible loader from a user-provided dataframe.
-    """
-    required = [pid_col, x_col, y_col, z_col]
-    for c in required:
-        if c not in df.columns:
-            raise ValueError(f"Missing required column '{c}'")
-
-    trajs: List[Trajectory] = []
-    for pid, g in df.groupby(pid_col):
-        pts: List[TrajectoryPoint] = []
-        for _, row in g.iterrows():
-            pts.append(
-                TrajectoryPoint(
-                    frame_id=int(row[frame_id_col])
-                    if frame_id_col and not pd.isna(row.get(frame_id_col))
-                    else None,
-                    ts=float(row[ts_col])
-                    if ts_col and not pd.isna(row.get(ts_col))
-                    else None,
-                    x=float(row[x_col]),
-                    y=float(row[y_col]),
-                    z=float(row[z_col]),
-                    vx=float(row[vx_col])
-                    if vx_col and vx_col in df.columns and not pd.isna(row.get(vx_col))
-                    else None,
-                    vy=float(row[vy_col])
-                    if vy_col and vy_col in df.columns and not pd.isna(row.get(vy_col))
-                    else None,
-                    vz=float(row[vz_col])
-                    if vz_col and vz_col in df.columns and not pd.isna(row.get(vz_col))
-                    else None,
-                )
-            )
-        trajs.append(Trajectory(pid=pid, points=pts))
-    return trajs
 
 
 # -----------------------------
@@ -453,16 +408,21 @@ def make_figure(
     )
 
     fig = go.Figure(data=traces)
+
+    # 限制最小可见场地范围（单位：cm）
+    min_x, max_x = 0, court.min_x_ground
+    min_y, max_y = court.min_y_ground / -2, court.min_y_ground / 2
+    min_z, max_z = 0, court.min_z_ground
     fig.update_layout(
         title=title,
         scene=dict(
-            xaxis_title="X (m)",
-            yaxis_title="Y (m)",
-            zaxis_title="Z (m)",
+            xaxis_title="X (cm)",
+            yaxis_title="Y (cm)",
+            zaxis_title="Z (cm)",
             aspectmode="data",
-            xaxis=dict(showbackground=False, zeroline=False),
-            yaxis=dict(showbackground=False, zeroline=False),
-            zaxis=dict(showbackground=False, zeroline=False),
+            xaxis=dict(showbackground=True, zeroline=True, range=[min_x, max_x]),
+            yaxis=dict(showbackground=True, zeroline=True, range=[min_y, max_y]),
+            zaxis=dict(showbackground=True, zeroline=True, range=[min_z, max_z]),
         ),
         legend=dict(orientation="h"),
     )
@@ -552,6 +512,10 @@ def make_animation(
             )
         frames.append(go.Frame(data=frame_data, name=str(t)))
 
+    # 限制最小可见场地范围（单位：cm）
+    min_x, max_x = 0, court.min_x_ground
+    min_y, max_y = court.min_y_ground / -2, court.min_y_ground / 2
+    min_z, max_z = 0, court.min_z_ground
     fig.frames = frames
     fig.update_layout(
         title=title,
@@ -560,6 +524,9 @@ def make_animation(
             yaxis_title="Y (m)",
             zaxis_title="Z (m)",
             aspectmode="data",
+            xaxis=dict(range=[min_x, max_x]),
+            yaxis=dict(range=[min_y, max_y]),
+            zaxis=dict(range=[min_z, max_z]),
         ),
         updatemenus=[
             {
