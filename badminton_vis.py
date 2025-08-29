@@ -104,12 +104,15 @@ def _parse_positions(positions: Iterable[Dict[str, Any]]) -> List[TrajectoryPoin
     pts: List[TrajectoryPoint] = []
     for item in positions:
         pos = item.get("pos") or {}
+        x = float(pos.get("x", np.nan))
+        y = float(pos.get("y", np.nan))
+        z = float(pos.get("z", np.nan))
         p = TrajectoryPoint(
             frame_id=item.get("frame_id"),
             ts=float(item["ts"]) if "ts" in item and item["ts"] is not None else None,
-            x=float(pos.get("x", np.nan)),
-            y=float(pos.get("y", np.nan)),
-            z=float(pos.get("z", np.nan)),
+            x=x,
+            y=y,
+            z=z,
             vx=(float(item["vx"]) if "vx" in item and item["vx"] is not None else None),
             vy=(float(item["vy"]) if "vy" in item and item["vy"] is not None else None),
             vz=(float(item["vz"]) if "vz" in item and item["vz"] is not None else None),
@@ -281,8 +284,10 @@ def court_traces(
     hw = spec.half_width()
 
     # Court rectangle (filled surface at z=0) using a dense outline
+
+    # Shift all x by hl to move origin to baseline center
     court_outline = np.array(
-        [[-hl, -hw, 0], [hl, -hw, 0], [hl, hw, 0], [-hl, hw, 0], [-hl, -hw, 0]]
+        [[0, -hw, 0], [L, -hw, 0], [L, hw, 0], [0, hw, 0], [0, -hw, 0]]
     )
     traces.append(
         go.Scatter3d(
@@ -296,10 +301,8 @@ def court_traces(
     )
 
     # Surface mesh (lightly colored rectangle at z=0)
-    # Plotly's Mesh3d needs triangulation; we fake a surface using a dense filled line w/ opacity via Scatter3d isn't ideal.
-    # Instead, create a very thin 'grid' via two diagonal triangles.
     surface = go.Mesh3d(
-        x=[-hl, hl, hl, -hl],
+        x=[0, L, L, 0],
         y=[-hw, -hw, hw, hw],
         z=[0, 0, 0, 0],
         i=[0, 1, 2],
@@ -316,57 +319,85 @@ def court_traces(
     # Service short lines (distance from net)
     if show_service_lines:
         d = spec.short_service_from_net
-        for sign in [-1, 1]:
-            x = sign * d
-            traces.append(
-                go.Scatter3d(
-                    x=[x, x],
-                    y=[-hw, hw],
-                    z=[0, 0],
-                    mode="lines",
-                    line=dict(width=line_width, color=line_color),
-                    name="Short Service Line",
-                )
+        # Short service lines (distance from net, now at x=hl)
+        traces.append(
+            go.Scatter3d(
+                x=[hl + d, hl + d],
+                y=[-hw, hw],
+                z=[0, 0],
+                mode="lines",
+                line=dict(width=line_width, color=line_color),
+                name="Short Service Line",
             )
+        )
+        traces.append(
+            go.Scatter3d(
+                x=[hl - d, hl - d],
+                y=[-hw, hw],
+                z=[0, 0],
+                mode="lines",
+                line=dict(width=line_width, color=line_color),
+                name="Short Service Line",
+            )
+        )
 
         # Long service line for doubles (0.76 m inside the back boundary)
-        for sign in [-1, 1]:
-            x = sign * (hl - spec.long_service_from_back_doubles)
-            traces.append(
-                go.Scatter3d(
-                    x=[x, x],
-                    y=[-hw, hw],
-                    z=[0, 0],
-                    mode="lines",
-                    line=dict(width=line_width, color=line_color),
-                    name="Long Service Line (Doubles)",
-                )
+        traces.append(
+            go.Scatter3d(
+                x=[
+                    L - spec.long_service_from_back_doubles,
+                    L - spec.long_service_from_back_doubles,
+                ],
+                y=[-hw, hw],
+                z=[0, 0],
+                mode="lines",
+                line=dict(width=line_width, color=line_color),
+                name="Long Service Line (Doubles)",
             )
+        )
+        traces.append(
+            go.Scatter3d(
+                x=[
+                    spec.long_service_from_back_doubles,
+                    spec.long_service_from_back_doubles,
+                ],
+                y=[-hw, hw],
+                z=[0, 0],
+                mode="lines",
+                line=dict(width=line_width, color=line_color),
+                name="Long Service Line (Doubles)",
+            )
+        )
 
     # Center service line (y=0) between short service line and back, per side
     if show_center_line:
         d = spec.short_service_from_net
-        for sign in [-1, 1]:
-            # From short service line to back boundary
-            x0 = sign * d
-            x1 = sign * hl
-            traces.append(
-                go.Scatter3d(
-                    x=[x0, x1],
-                    y=[0, 0],
-                    z=[0, 0],
-                    mode="lines",
-                    line=dict(width=line_width, color=line_color),
-                    name="Center Line",
-                )
+        # Center line from short service line to back boundary, both sides
+        traces.append(
+            go.Scatter3d(
+                x=[hl + d, L],
+                y=[0, 0],
+                z=[0, 0],
+                mode="lines",
+                line=dict(width=line_width, color=line_color),
+                name="Center Line",
             )
+        )
+        traces.append(
+            go.Scatter3d(
+                x=[hl - d, 0],
+                y=[0, 0],
+                z=[0, 0],
+                mode="lines",
+                line=dict(width=line_width, color=line_color),
+                name="Center Line",
+            )
+        )
 
     # Net (vertical rectangle at x=0)
-    net_x = [0, 0, 0, 0]
-    net_y = [-hw, hw, hw, -hw]
-    net_z = [0, 0, spec.net_height_center, spec.net_height_center]
+    # Net at x=hl (原点到球场中线)
     net = go.Mesh3d(
-        x=[0, 0, 0, 0],
+        x=[hl, hl, hl, hl],
         y=[-hw, hw, hw, -hw],
         z=[0, 0, spec.net_height_center, spec.net_height_center],
         i=[0, 1, 2],
@@ -378,7 +409,6 @@ def court_traces(
         showscale=False,
     )
     traces.append(net)
-
     return traces
 
 
