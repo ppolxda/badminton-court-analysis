@@ -28,20 +28,17 @@ except Exception as e:
 @dataclass
 class CourtSpec:
     # BWF standard metrics in meters (defaults)
-    length: float = 13.40  # total court length
-    width_doubles: float = 6.10  # total width for doubles
+    length: float = 13.40 * 100  # total court length
+    width_doubles: float = 6.10 * 100  # total width for doubles
     width_singles: float = (
-        5.18  # total width for singles (reference; we draw full doubles by default)
+        5.18
+        * 100  # total width for singles (reference; we draw full doubles by default)
     )
-    net_height_center: float = 1.524  # net height at center
-    line_width: float = 0.04  # typical painted line width (visual only)
+    net_height_center: float = 1.524 * 100  # net height at center
+    line_width: float = 0.04 * 100  # typical painted line width (visual only)
     # Service lines (distances from the net or back boundary)
-    short_service_from_net: float = 1.98
-    long_service_from_back_doubles: float = 0.76
-    # Coordinate system: origin at court center on the floor (z=0)
-    # x axis along length (negative to one side, positive to the other)
-    # y axis along width (left/right when facing along +x)
-    # z axis upwards
+    short_service_from_net: float = 1.98 * 100
+    long_service_from_back_doubles: float = 0.76 * 100
 
     def half_length(self) -> float:
         return self.length / 2.0
@@ -104,15 +101,12 @@ def _parse_positions(positions: Iterable[Dict[str, Any]]) -> List[TrajectoryPoin
     pts: List[TrajectoryPoint] = []
     for item in positions:
         pos = item.get("pos") or {}
-        x = float(pos.get("x", np.nan))
-        y = float(pos.get("y", np.nan))
-        z = float(pos.get("z", np.nan))
         p = TrajectoryPoint(
             frame_id=item.get("frame_id"),
             ts=float(item["ts"]) if "ts" in item and item["ts"] is not None else None,
-            x=x,
-            y=y,
-            z=z,
+            x=float(pos.get("x", np.nan)),
+            y=float(pos.get("y", np.nan)),
+            z=float(pos.get("z", np.nan)),
             vx=(float(item["vx"]) if "vx" in item and item["vx"] is not None else None),
             vy=(float(item["vy"]) if "vy" in item and item["vy"] is not None else None),
             vz=(float(item["vz"]) if "vz" in item and item["vz"] is not None else None),
@@ -287,7 +281,7 @@ def court_traces(
 
     # Shift all x by hl to move origin to baseline center
     court_outline = np.array(
-        [[0, -hw, 0], [L, -hw, 0], [L, hw, 0], [0, hw, 0], [0, -hw, 0]]
+        [[L, -hw, 0], [0, -hw, 0], [0, hw, 0], [L, hw, 0], [L, -hw, 0]]
     )
     traces.append(
         go.Scatter3d(
@@ -302,7 +296,7 @@ def court_traces(
 
     # Surface mesh (lightly colored rectangle at z=0)
     surface = go.Mesh3d(
-        x=[0, L, L, 0],
+        x=[L, 0, 0, L],
         y=[-hw, -hw, hw, hw],
         z=[0, 0, 0, 0],
         i=[0, 1, 2],
@@ -319,10 +313,10 @@ def court_traces(
     # Service short lines (distance from net)
     if show_service_lines:
         d = spec.short_service_from_net
-        # Short service lines (distance from net, now at x=hl)
+        # Short service lines
         traces.append(
             go.Scatter3d(
-                x=[hl + d, hl + d],
+                x=[L - (hl + d), L - (hl + d)],
                 y=[-hw, hw],
                 z=[0, 0],
                 mode="lines",
@@ -332,7 +326,7 @@ def court_traces(
         )
         traces.append(
             go.Scatter3d(
-                x=[hl - d, hl - d],
+                x=[L - (hl - d), L - (hl - d)],
                 y=[-hw, hw],
                 z=[0, 0],
                 mode="lines",
@@ -341,12 +335,12 @@ def court_traces(
             )
         )
 
-        # Long service line for doubles (0.76 m inside the back boundary)
+        # Long service line for doubles
         traces.append(
             go.Scatter3d(
                 x=[
-                    L - spec.long_service_from_back_doubles,
-                    L - spec.long_service_from_back_doubles,
+                    L - (L - spec.long_service_from_back_doubles),
+                    L - (L - spec.long_service_from_back_doubles),
                 ],
                 y=[-hw, hw],
                 z=[0, 0],
@@ -358,8 +352,8 @@ def court_traces(
         traces.append(
             go.Scatter3d(
                 x=[
-                    spec.long_service_from_back_doubles,
-                    spec.long_service_from_back_doubles,
+                    L - spec.long_service_from_back_doubles,
+                    L - spec.long_service_from_back_doubles,
                 ],
                 y=[-hw, hw],
                 z=[0, 0],
@@ -375,7 +369,7 @@ def court_traces(
         # Center line from short service line to back boundary, both sides
         traces.append(
             go.Scatter3d(
-                x=[hl + d, L],
+                x=[L - (hl + d), 0],
                 y=[0, 0],
                 z=[0, 0],
                 mode="lines",
@@ -385,7 +379,7 @@ def court_traces(
         )
         traces.append(
             go.Scatter3d(
-                x=[hl - d, 0],
+                x=[L - (hl - d), L],
                 y=[0, 0],
                 z=[0, 0],
                 mode="lines",
@@ -395,9 +389,9 @@ def court_traces(
         )
 
     # Net (vertical rectangle at x=0)
-    # Net at x=hl (原点到球场中线)
+    # Net at x=L-hl
     net = go.Mesh3d(
-        x=[hl, hl, hl, hl],
+        x=[L - hl, L - hl, L - hl, L - hl],
         y=[-hw, hw, hw, -hw],
         z=[0, 0, spec.net_height_center, spec.net_height_center],
         i=[0, 1, 2],
