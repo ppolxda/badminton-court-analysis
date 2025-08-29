@@ -56,6 +56,7 @@ class CourtSpec:
 @dataclass
 class TrajectoryPoint:
     frame_id: Optional[int] = None
+    type: Optional[str] = None
     ts: Optional[float] = None
     x: float = 0.0
     y: float = 0.0
@@ -69,6 +70,7 @@ class TrajectoryPoint:
 @dataclass
 class Trajectory:
     pid: Union[str, int]
+    track_id: Union[str, int]
     msgtype: str
     points: List[TrajectoryPoint]
 
@@ -78,7 +80,9 @@ class Trajectory:
             rows.append(
                 {
                     "pid": self.pid,
+                    "track_id": self.track_id,
                     "frame_id": p.frame_id,
+                    "type": p.type,
                     "ts": p.ts,
                     "x": p.x,
                     "y": p.y,
@@ -91,9 +95,9 @@ class Trajectory:
         df = pd.DataFrame(rows)
         # sort by ts if present, else frame_id
         if "ts" in df.columns and df["ts"].notna().any():
-            df = df.sort_values(["pid", "ts", "frame_id"], na_position="last")
+            df = df.sort_values(["track_id", "ts", "frame_id"], na_position="last")
         else:
-            df = df.sort_values(["pid", "frame_id"])
+            df = df.sort_values(["track_id", "frame_id"])
         df = df.reset_index(drop=True)
         return df
 
@@ -107,6 +111,7 @@ def _parse_positions(positions: Iterable[Dict[str, Any]]) -> List[TrajectoryPoin
         pos = item.get("pos") or {}
         p = TrajectoryPoint(
             frame_id=item.get("frame_id"),
+            type=item.get("type"),
             ts=float(item["ts"]) if "ts" in item and item["ts"] is not None else None,
             x=float(pos.get("x", np.nan)),
             y=float(pos.get("y", np.nan)),
@@ -137,10 +142,13 @@ def load_from_json_obj(
     trajs: List[Trajectory] = []
     for msg in messages:
         pid = msg.get("pid", "unknown")
+        track_id = msg.get("track_id", "unknown")
         msgtype = msg.get("msgtype", "unknown")
         positions = msg.get("positions", [])
         pts = _parse_positions(positions)
-        trajs.append(Trajectory(pid=pid, msgtype=msgtype, points=pts))
+        trajs.append(
+            Trajectory(pid=pid, track_id=track_id, msgtype=msgtype, points=pts)
+        )
     return trajs
 
 
@@ -161,9 +169,9 @@ def sort_and_clean(df: pd.DataFrame) -> pd.DataFrame:
             df[c] = pd.to_numeric(df[c], errors="coerce")
     # Sort
     if "ts" in df.columns and df["ts"].notna().any():
-        df = df.sort_values(["pid", "ts", "frame_id"], na_position="last")
+        df = df.sort_values(["track_id", "ts", "frame_id"], na_position="last")
     else:
-        df = df.sort_values(["pid", "frame_id"])
+        df = df.sort_values(["track_id", "frame_id"])
     df = df.reset_index(drop=True)
     # Drop rows with missing essential coords
     df = df.dropna(subset=["x", "y", "z"])
@@ -173,7 +181,7 @@ def sort_and_clean(df: pd.DataFrame) -> pd.DataFrame:
 def smooth(df: pd.DataFrame, window: int = 3) -> pd.DataFrame:
     """Simple moving average smoothing over x,y,z per pid."""
     df = df.copy()
-    for pid, idx in df.groupby("pid").groups.items():
+    for (track_id, type), idx in df.groupby(["track_id", "type"]).groups.items():
         for col in ["x", "y", "z"]:
             df.loc[idx, col] = (
                 df.loc[idx, col].rolling(window, min_periods=1, center=True).mean()
@@ -188,7 +196,7 @@ def interpolate_time(df: pd.DataFrame, freq_ms: int = 10) -> pd.DataFrame:
             "interpolate_time requires a 'ts' column with timestamps (ms)."
         )
     out = []
-    for pid, g in df.groupby("pid"):
+    for (track_id, type), g in df.groupby(["track_id", "type"]):
         g = g.sort_values("ts")
         # create target time grid
         ts_min, ts_max = g["ts"].min(), g["ts"].max()
@@ -201,7 +209,8 @@ def interpolate_time(df: pd.DataFrame, freq_ms: int = 10) -> pd.DataFrame:
             on="ts",
             direction="nearest",
         )
-        merged["pid"] = pid
+        merged["track_id"] = track_id
+        merged["type"] = type
         out.append(merged)
     out = pd.concat(out, ignore_index=True)
     # optional interpolation for NaNs
@@ -375,11 +384,11 @@ def trajectories_traces(
     Build static trajectory line traces for each pid.
     """
     traces: List[go.Scatter3d] = []
-    for pid, g in df.groupby("pid"):
+    for (track_id, type), g in df.groupby(["track_id", "type"]):
         g = g.sort_values(["ts", "frame_id"], na_position="last")
         color = None
-        if pid_palette and pid in pid_palette:
-            color = pid_palette[pid]
+        if pid_palette and track_id in pid_palette:
+            color = pid_palette[track_id]
         traces.append(
             go.Scatter3d(
                 x=g["x"],
@@ -388,7 +397,7 @@ def trajectories_traces(
                 mode="lines+markers" if show_markers else "lines",
                 line=dict(width=line_width, color=color),
                 marker=dict(size=marker_size) if show_markers else None,
-                name=f"PID {pid}",
+                name=f"Track {track_id} - {type}",
             )
         )
     return traces
@@ -446,7 +455,7 @@ def make_animation(
     df = df.copy()
     if time_col not in df.columns or df[time_col].isna().all():
         # create a synthetic timeline using row index per pid
-        df["__t"] = df.groupby("pid").cumcount()
+        df["__t"] = df.groupby(["track_id", "type"]).cumcount()
         time_col = "__t"
 
     # Normalize time to sorted unique keys
@@ -462,7 +471,7 @@ def make_animation(
     for t in times:
         frame_data = []
         # one marker per pid at current time, plus (optional) trail up to t
-        for pid, g in df.groupby("pid"):
+        for (track_id, type), g in df.groupby(["track_id", "type"]):
             g = g.sort_values(time_col)
             g_up_to_t = g[g[time_col] <= t]
             if g_up_to_t.empty:
@@ -476,16 +485,16 @@ def make_animation(
                         z=g_up_to_t["z"],
                         mode="lines",
                         line=dict(width=5),
-                        name=f"Trail {pid}",
+                        name=f"Trail {track_id} - {type}",
                         showlegend=False,
                     )
                 )
             # Head marker
             last = g_up_to_t.iloc[-1]
             hovertext = (
-                f"pid={pid}<br>t={last.get(time_col):.1f}"
+                f"tid={track_id}<br>t={last.get(time_col):.1f}"
                 if pd.notna(last.get(time_col))
-                else f"pid={pid}"
+                else f"tid={track_id}"
             )
             if "vx" in g.columns and "vy" in g.columns and "vz" in g.columns:
                 if (
@@ -504,7 +513,7 @@ def make_animation(
                     z=[last["z"]],
                     mode="markers",
                     marker=dict(size=6),
-                    name=f"Ball {pid}",
+                    name=f"Ball {track_id} - {type}",
                     hovertext=hovertext,
                     hoverinfo="text",
                     showlegend=False,
