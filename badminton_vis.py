@@ -95,7 +95,7 @@ class Trajectory:
         df = pd.DataFrame(rows)
         # sort by ts if present, else frame_id
         if "ts" in df.columns and df["ts"].notna().any():
-            df = df.sort_values(["track_id", "ts", "frame_id"], na_position="last")
+            df = df.sort_values(["track_id", "ts"], na_position="last")
         else:
             df = df.sort_values(["track_id", "frame_id"])
         df = df.reset_index(drop=True)
@@ -169,7 +169,7 @@ def sort_and_clean(df: pd.DataFrame) -> pd.DataFrame:
             df[c] = pd.to_numeric(df[c], errors="coerce")
     # Sort
     if "ts" in df.columns and df["ts"].notna().any():
-        df = df.sort_values(["track_id", "ts", "frame_id"], na_position="last")
+        df = df.sort_values(["track_id", "ts"], na_position="last")
     else:
         df = df.sort_values(["track_id", "frame_id"])
     df = df.reset_index(drop=True)
@@ -385,7 +385,7 @@ def trajectories_traces(
     """
     traces: List[go.Scatter3d] = []
     for (track_id, type), g in df.groupby(["track_id", "type"]):
-        g = g.sort_values(["ts", "frame_id"], na_position="last")
+        g = g.sort_values(["ts"], na_position="last")
         color = None
         if pid_palette and track_id in pid_palette:
             color = pid_palette[track_id]
